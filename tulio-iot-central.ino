@@ -3,12 +3,17 @@
 #include <stdint.h>
 #include <RCSwitch.h>
 #include <ArduinoJson.h>
+#include <WiFi.h>
 
 #include "wifi_module.h"
 #include "things.h"
 #include "iot_aws_module.h"
+#include "display.h"
 
 RCSwitch mySwitch = RCSwitch();
+
+// Configura o receptor no GPIO15 ou 22 (displaY)
+const int RF_IO = 22;
 
 // Credenciais de Wi-Fi
 const char* ssid = "Tulio-AP";
@@ -22,10 +27,11 @@ struct ThingInfo {
   String slug;
   uint8_t bitPosition;
   int frequency;
+  String displayName;
 };
 ThingInfo things[] = {
-  { "FirstTestDevice", 0, 2565608 },
-  { "SecondTestDevice", 1, 6460648 }
+  { "FirstTestDevice", 0, 2565608, "Varanda" },
+  { "SecondTestDevice", 1, 6460648, "Quarto" }
 };
 
 ThingInfo* getThingInfo(String slug) {
@@ -46,25 +52,54 @@ ThingInfo* getThingInfo(int frequency) {
   return nullptr;  // Retorna nullptr se não encontrar
 }
 
-const int ledPin = 2;  // GPIO do LED interno
+// const int ledPin = 2;  // GPIO do LED interno
+
+void setLedStatus(bool isOn) {
+  if (!isOn) {
+    digitalWrite(4, HIGH);   //R
+    digitalWrite(16, HIGH);  //G
+    digitalWrite(17, HIGH);  //B
+  } else {
+    digitalWrite(4, LOW);
+    digitalWrite(16, HIGH);
+    digitalWrite(17, HIGH);
+  }
+}
 
 // Inicializa o cliente MQTT
 PubSubClient client;
 
+bool getRfStatus() {
+  int pinValue = digitalRead(RF_IO);
+  if (pinValue == HIGH || pinValue == LOW) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
 void setup() {
-  pinMode(ledPin, OUTPUT);
-  digitalWrite(ledPin, HIGH);
+
+  pinMode(4, OUTPUT);   // Pino do canal vermelho
+  pinMode(16, OUTPUT);  // Pino do canal verde
+  pinMode(17, OUTPUT);  // Pino do canal azul
+
+  setLedStatus(true);
 
   Serial.begin(115200);
   Serial.println("Starting...");
+  startDisplay();
 
-  mySwitch.enableReceive(15);  // Configura o receptor no GPIO15
+  mySwitch.enableReceive(RF_IO);
+  updateStatusListHeader(WiFi.isConnected(), client.connected(), getRfStatus());
 
   // Conecta ao Wi-Fi
   setupWiFi(ssid, password);
+  updateStatusListHeader(WiFi.isConnected(), client.connected(), getRfStatus());
 
   setupIoT(client, mqttServer, mqttPort);
   client.setCallback(callback);
+  updateStatusListHeader(WiFi.isConnected(), client.connected(), getRfStatus());
 
   subscribeAll();
 }
@@ -97,7 +132,7 @@ void subscribeTopic(String topic) {
 
 void subscribeAll() {
   subscribeTopic("SecondTestDevice");
-  digitalWrite(ledPin, LOW);
+  setLedStatus(false);
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
@@ -144,12 +179,23 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
   ThingInfo* thing = getThingInfo(slug);
   thingStates ^= (1 << thing->bitPosition);  // alterna o status
+
+  String text = thing->displayName;
+  text += " - ";
+  text += powerState;
+  text += " : ";
+  text += powerState;
+  updateStatusList(thing->bitPosition, text);
 }
 
 void loop() {
+  updateStatusListHeader(WiFi.isConnected(), client.connected(), getRfStatus());
+  if (WiFi.status() != WL_CONNECTED) {
+    setupWiFi(ssid, password);
+  }
   client.loop();
   if (!client.connected()) {
-    digitalWrite(ledPin, HIGH);
+    setLedStatus(true);
     reconnectMQTT(client);
     subscribeAll();
   }
@@ -163,6 +209,8 @@ void loop() {
     }
     mySwitch.resetAvailable();
   }
+
+  monitorTouch();
 }
 
 void switchPressed(int code) {
@@ -178,12 +226,17 @@ void switchThing(int receivedFrequency) {
     Serial.print("Pressionando ");
     Serial.println(thing->slug);
 
+    String text = thing->displayName;
+
     if (thingStates & (1 << thing->bitPosition)) {  // ligado
       publishToThing(client, thing->slug.c_str(), "OFF");
       Serial.println("Desligando");
+      text += " - OFF : ON";
     } else {
       publishToThing(client, thing->slug.c_str(), "ON");
       Serial.println("Ligando");
+      text += " - ON : OFF";
     }
+    updateStatusList(thing->bitPosition, text);
   }
 }

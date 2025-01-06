@@ -36,6 +36,12 @@ void publishToThing(PubSubClient& client, const char* thingName, const char* pow
   String topic = String("$aws/things/") + thingName + "/shadow/update";
   String payload = String("{\"state\":{\"desired\":{\"powerState\":\"") + powerState + "\"}}}";
 
+  Serial.print("Publicando em: ");
+  Serial.println(topic);
+
+  Serial.print("Payload: ");
+  Serial.println(payload);
+
   if (client.publish(topic.c_str(), payload.c_str())) {
     Serial.println("Publicado com sucesso!");
   } else {
